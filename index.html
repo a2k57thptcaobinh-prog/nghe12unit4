@@ -49,6 +49,10 @@ legend{padding:0;margin-bottom:8px;font-weight:800;display:flex;gap:10px;align-i
 .pic{display:block;width:100%;height:auto;margin:6px 0 4px;background:#fff;border:3px solid var(--ink);border-radius:12px}
 .cap{display:grid;grid-template-columns:repeat(3,1fr);margin:0 0 8px;text-align:center;font:800 16px var(--disp)}
 .ins{margin:-6px 0 12px;color:var(--mut);font-weight:700}
+.prow{display:flex;gap:10px;align-items:stretch;margin:0 0 8px}
+.prow .play{flex:1;width:auto;margin:0;min-width:0}
+.stopb{flex:none;margin:0;padding:8px 14px;background:var(--bad);font-size:16px}
+.stopb:disabled{background:#d8d8e6;color:#8b8fb5;box-shadow:0 6px 0 #a9adcf;border-color:#a9adcf}
 input.fill{max-width:none;margin:8px 0 0;font-size:16px}
 label.o{position:relative;display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;background:var(--card);border:3px solid var(--ink);border-radius:14px;box-shadow:0 5px 0 var(--ink);transition:transform .08s,box-shadow .08s,background .12s}
 label.o input{position:absolute;opacity:0;inset:0;cursor:pointer}
@@ -65,7 +69,7 @@ label.o:has(input:focus-visible){outline:3px solid var(--sun);outline-offset:3px
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style></head><body>
 <div id="top" class="hide"><div class="tin"><span>Tiến độ</span><div class="track"><div id="fill"></div></div><span id="pc">0/9 câu</span></div></div>
-<main><h1>Listening 12</h1><div id="app"></div></main>
+<main><h1>Listening 12</h1><div id="app"></div><p class="mut" style="text-align:center;font-size:12px;margin-top:24px">Phiên bản v3 · có nút Dừng nghe</p></main>
 <script>
 // ====== CẤU HÌNH: dán địa chỉ Firebase Realtime Database của bạn (không có dấu / ở cuối) ======
 const DB_URL = "https://nghe12unit4-default-rtdb.asia-southeast1.firebasedatabase.app";
@@ -110,17 +114,29 @@ function start(){
     catch(e){$("#e").textContent="Chưa kết nối được máy chủ. Nhờ thầy cô kiểm tra lại, rồi thử lại."}
   };
 }
-const aud={};
+const aud={},busy={};
+// Mỗi bài dùng đúng 1 đối tượng audio, nên không bao giờ có 2 luồng phát chồng nhau
+const el=i=>aud[i]||(aud[i]=new Audio(EX.find(e=>e.id===i).audio));
 function say(i){
-  if(aud[i]&&!aud[i].paused)return;
-  if((plays[i]||0)>=MAXPLAY)return;plays[i]=(plays[i]||0)+1;
-  const e=EX.find(e=>e.id===i),b=$("#pl-"+i),sm=b.querySelector("small"),left=MAXPLAY-plays[i];
-  const a=aud[i]=new Audio(e.audio);
-  b.classList.add("on");sm.textContent="Đang phát… còn "+left+" lượt";
-  const done=()=>{b.classList.remove("on");sm.textContent=left?"Còn "+left+" lượt nghe":"Đã hết lượt nghe";b.disabled=left<=0};
-  const fail=()=>{plays[i]--;b.classList.remove("on");sm.textContent="Không tải được file nghe. Báo thầy cô nhé."};
-  a.onended=done;a.onerror=fail;
-  const p=a.play();if(p&&p.catch)p.catch(fail);
+  if(busy[i]){stop(i);return}   // bấm lại nút vàng khi đang nghe = dừng / tiếp tục
+  if((plays[i]||0)>=MAXPLAY)return;
+  EX.forEach(o=>{if(o.id!==i&&busy[o.id]&&!el(o.id).paused)stop(o.id)});
+  plays[i]=(plays[i]||0)+1;
+  const b=$("#pl-"+i),sm=b.querySelector("small"),st=$("#st-"+i),left=MAXPLAY-plays[i];
+  const a=el(i);a.pause();try{a.currentTime=0}catch(e){}
+  busy[i]=true;b.classList.add("on");sm.textContent="Đang phát… còn "+left+" lượt";st.disabled=false;st.textContent="⏸ Dừng";
+  const end=()=>{busy[i]=false;st.disabled=true;st.textContent="⏸ Dừng";b.classList.remove("on")};
+  a.onended=()=>{end();sm.textContent=left?"Còn "+left+" lượt nghe":"Đã hết lượt nghe";b.disabled=left<=0};
+  const fail=()=>{end();plays[i]--;sm.textContent="Không tải được file nghe. Báo thầy cô nhé."};
+  a.onerror=fail;
+  const p=a.play();if(p&&p.catch)p.catch(err=>{if(err&&err.name==="AbortError")return;fail()});
+}
+// Dừng / tiếp tục nghe: không tốn thêm lượt nghe
+function stop(i){
+  if(!busy[i])return;
+  const a=el(i),b=$("#pl-"+i),sm=b.querySelector("small"),st=$("#st-"+i);
+  if(a.paused){const p=a.play();if(p&&p.catch)p.catch(()=>{});b.classList.add("on");st.textContent="⏸ Dừng";sm.textContent="Đang phát… còn "+(MAXPLAY-plays[i])+" lượt"}
+  else{a.pause();b.classList.remove("on");st.textContent="▶ Tiếp tục";sm.textContent="Đã dừng · bấm Tiếp tục để nghe tiếp (không mất lượt)"}
 }
 function qhtml(e,q,i){
   const nm=e.id+"-"+i;let body;
@@ -132,10 +148,10 @@ function quiz(){
   bar(true);
   app.innerHTML='<p class="who">Học sinh: <b>'+esc(name)+'</b></p>'+EX.map(e=>
    '<section class="card"><h2><span class="num">'+e.no+'</span>'+esc(e.title.replace(/^Bài \d: /,""))+'</h2><p class="ins">'+esc(e.ins)+'</p>'+
-   '<button class="play" id="pl-'+e.id+'"><span class="disc"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg><span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span></span><span class="pt"><b>Nghe bài</b><small>Còn '+MAXPLAY+' lượt nghe</small></span></button>'+
+   '<div class="prow"><button class="play" id="pl-'+e.id+'"><span class="disc"><svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"/></svg><span class="eq" aria-hidden="true"><i></i><i></i><i></i><i></i></span></span><span class="pt"><b>Nghe bài</b><small>Còn '+MAXPLAY+' lượt nghe</small></span></button><button class="key stopb" id="st-'+e.id+'" disabled>⏸ Dừng</button></div>'+
    e.qs.map((q,i)=>qhtml(e,q,i)).join('')+'</section>').join('')+
    '<div class="sub"><button class="key big go2" id="sb">Nộp bài</button><span class="err" id="m" role="alert"></span></div>';
-  EX.forEach(e=>$("#pl-"+e.id).onclick=()=>say(e.id));
+  EX.forEach(e=>{$("#pl-"+e.id).onclick=()=>say(e.id);$("#st-"+e.id).onclick=()=>stop(e.id)});
   $("#sb").onclick=submit;
   app.addEventListener("change",prog);app.addEventListener("input",prog);prog();
 }
@@ -158,7 +174,7 @@ async function submit(){
   $("#sb").disabled=true;
   try{
     const cur=await (await fetch(url())).json();
-    await put({name,startedAt:cur.startedAt,submittedAt:SV,status:"done",answers,scores,total});
+    await put({name,startedAt:(cur&&cur.startedAt)||SV,submittedAt:SV,status:"done",answers,scores,total});
     bar(false);app.innerHTML='<section class="card hero res"><div class="score"><b>'+total+'</b><span>/'+TOTAL+'</span></div><h2>Đã nộp bài, '+esc(name)+'!</h2>'+EX.map((e,i)=>'<p class="rl"><span>'+esc(e.title)+'</span><b>'+scores[i]+'/'+e.qs.length+'</b></p>').join('')+'</section>';
   }catch(e){$("#sb").disabled=false;$("#m").textContent="Chưa gửi được bài. Kiểm tra mạng rồi bấm Nộp bài lại."}
 }
